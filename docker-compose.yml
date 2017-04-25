@@ -1,0 +1,7 @@
+version: '2'
+services:
+  app:
+    build: .
+    volumes:
+     - .:/go/src/oktad
+    working_dir: /go/src/oktad
