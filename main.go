@@ -16,9 +16,10 @@ const SESSION_COOKIE = "__oktad_session_cookie"
 
 func main() {
 	var opts struct {
-		ConfigFile          string `short:"c" long:"config" description:"Path to config file"`
+		ConfigFile          string `short:"c" long:"config" description:"Path to config file" default:"~/.oktad/config"`
 		PrintVersion        bool   `short:"v" long:"version" description:"Print version number and exit"`
 		ForceNewCredentials bool   `short:"f" long:"force-new" description:"force new credentials"`
+		ProfileName         string `short:"p" long:"profile-name" description:"Profile name to save the credentials to"`
 	}
 
 	debug := debug.Debug("oktad:main")
@@ -165,7 +166,16 @@ func main() {
 		fExp = mExp
 	}
 
+	if opts.ProfileName != "" {
+		awsProfile = opts.ProfileName
+	}
+
 	// all was good, so let's save credentials...
+	err = storeCredsAws(awsProfile, finalCreds)
+	if err != nil {
+		debug("err storing aws credentials, %s", err)
+	}
+
 	err = storeCreds(awsProfile, finalCreds, fExp)
 	if err != nil {
 		debug("err storing credentials, %s", err)

@@ -6,9 +6,14 @@ import "fmt"
 import "time"
 import "encoding/base64"
 import "encoding/gob"
+
+import "os/user"
+import "path/filepath"
+
 import "github.com/tj/go-debug"
 import "github.com/aws/aws-sdk-go/aws/credentials"
 import "github.com/havoc-io/go-keytar"
+import "github.com/go-ini/ini"
 
 var debugCredStore = debug.Debug("oktad:credStore")
 var credsNotFound = errors.New("credentials not found!")
@@ -25,6 +30,35 @@ type AwsCreds struct {
 
 
 // stores credentials in a file
+func storeCredsAws(profile string, creds *credentials.Credentials) error {
+	usr, _ := user.Current()
+	dir := usr.HomeDir
+	cfg, err := ini.Load(filepath.Join(dir, ".aws/credentials"))
+	if (err != nil) {
+		debugCredStore("unable to open credential file")
+		return err
+	}
+
+	v, err := creds.Get()
+	if err != nil {
+		debugCredStore("failed to read aws creds")
+		return err
+	}
+	
+	section := cfg.Section(profile)
+	section.NewKey("aws_access_key_id", v.AccessKeyID)
+	section.NewKey("aws_secret_access_key", v.SecretAccessKey)
+	section.NewKey("aws_session_token", v.SessionToken)
+
+	err = cfg.SaveTo(filepath.Join(dir, ".aws/credentials"))
+	if (err != nil) {
+		debugCredStore("unable to save credential file")
+		return err
+	}
+
+	return nil
+}
+
 func storeCreds(profile string, creds *credentials.Credentials, expire time.Time) error {
 
 	keyStore, err := keytar.GetKeychain()
