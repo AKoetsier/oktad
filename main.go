@@ -4,6 +4,7 @@ import "fmt"
 
 import "time"
 import "errors"
+import "strconv"
 import "net/http"
 import "github.com/jessevdk/go-flags"
 import "github.com/tj/go-debug"
@@ -213,16 +214,61 @@ func getSessionFromLogin(oktaCfg *OktaConfig) (string, error) {
 		return "", errors.New("MFA required to use this tool")
 	}
 
-	factor, err := extractTokenFactor(ores)
-
+	factor, err := selectTokenFactor(ores)
+	
 	if err != nil {
 		fmt.Println("Error processing okta response!")
 		debug("err from extractTokenFactor was %s", err)
 		return "", err
 	}
 
+ 	var sessionToken string
+	sessionToken, err = startMfa(ores, factor)
+	if err != nil {
+		fmt.Println("Error doing MFA!")
+		debug("err from startMfa was %s", err)
+		return "", err
+	}
+
+	return sessionToken, nil
+}
+
+func startMfa(ores *OktaLoginResponse, factor *OktaMfaFactor) (sessionToken string, err error) {
+	if factor.FactorType == "push" {
+		sessionToken, err = startPushMfa(ores, factor)
+	} else if factor.FactorType == "token:software:totp" {
+		sessionToken, err = startTotpMfa(ores, factor)
+	}
+
+	return
+}
+
+func startPushMfa(ores *OktaLoginResponse, factor *OktaMfaFactor) (sessionToken string, err error) {
 	tries := 0
-	var sessionToken string
+	debug := debug.Debug("oktad:startPushMfa")
+
+TRYPUSH:
+	if tries < 15 {
+		sessionToken, err = doMfa(ores, factor, "-")
+		if err != nil {
+			tries++
+			fmt.Println("Push not yet acked, sleeping")
+			time.Sleep(time.Duration(2)*time.Second)
+			goto TRYPUSH // eat that, Djikstra!
+		}
+	} else {
+		fmt.Println("Error performing MFA auth!")
+		debug("error from doMfa was %s", err)
+		return "", err
+	}
+
+	return sessionToken, nil
+}
+
+
+func startTotpMfa(ores *OktaLoginResponse, factor *OktaMfaFactor) (sessionToken string, err error) {
+	tries := 0
+	debug := debug.Debug("oktad:startTotpMfa")
 
 TRYMFA:
 	mfaToken, err := readMfaToken()
@@ -276,4 +322,53 @@ func readMfaToken() (string, error) {
 	li.SetCtrlCAborts(true)
 	fmt.Println("Your account requires MFA; please enter a token.")
 	return li.Prompt("MFA token: ")
+}
+
+// pulls the factor we should use out of the response
+func selectTokenFactor(ores *OktaLoginResponse) (*OktaMfaFactor, error) {
+	debug := debug.Debug("oktad:selectTokenFactor")
+
+	factors := ores.Embedded.Factors
+	if len(factors) == 0 {
+		return nil, errors.New("MFA factors not present in response")
+	}
+
+	if len(factors) == 1 {
+		debug("found just a single factor: %s", factors)
+		return &factors[0], nil
+	}
+
+	li := liner.NewLiner()
+	defer li.Close()
+	li.SetCtrlCAborts(true)
+	
+
+	var mfaFactor OktaMfaFactor
+	for i, factor := range factors {
+		// need to assert that this is a map
+		// since I don't know the structure enough
+		// to make a struct for it
+		if factor.FactorType == "push" {
+			fmt.Printf("[%d] Push notification\n", i)
+		}
+
+		if factor.FactorType == "token:software:totp" {
+			if factor.Provider == "GOOGLE" {
+				fmt.Printf("[%d] Google Authenticator\n",i)
+			} else {
+				fmt.Printf("[%d] Okta Verify\n",i)
+			}
+		}
+	}
+
+	mfaIdxAnswer, _ := li.Prompt("Select your second factor: ")
+	mfaIdx, _ := strconv.Atoi(mfaIdxAnswer)
+
+	mfaFactor = factors[mfaIdx]
+
+	if mfaFactor.Id == "" {
+		return nil, wrongMfaError
+	}
+
+	return &mfaFactor, nil
 }

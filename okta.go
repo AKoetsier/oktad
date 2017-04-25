@@ -144,32 +144,6 @@ func makeRequestBody(t interface{}) io.Reader {
 	return &b
 }
 
-// pulls the factor we should use out of the response
-func extractTokenFactor(ores *OktaLoginResponse) (*OktaMfaFactor, error) {
-	factors := ores.Embedded.Factors
-	if len(factors) == 0 {
-		return nil, errors.New("MFA factors not present in response")
-	}
-
-	var tokenFactor OktaMfaFactor
-	for _, factor := range factors {
-		// need to assert that this is a map
-		// since I don't know the structure enough
-		// to make a struct for it
-		if factor.FactorType == "token:software:totp" {
-			debugOkta("software totp token found!")
-			tokenFactor = factor
-			break
-		}
-	}
-
-	if tokenFactor.Id == "" {
-		return nil, wrongMfaError
-	}
-
-	return &tokenFactor, nil
-}
-
 // do that mfa stuff
 //
 // returns the okta session token and an error if any)
